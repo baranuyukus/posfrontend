@@ -99,12 +99,25 @@ export default function Home() {
           console.log("📱 Barkod/SKU araması:", searchTerm);
           const res = await api.get(`/product/${searchTerm}`);
           
-          if (res.data && res.data.products && res.data.products.length > 0) {
-            console.log(`✅ ${res.data.products.length} ürün bulundu (direkt)`);
-            return res.data.products;
+          console.log("🔍 Direkt arama response:", res.data);
+          
+          // Farklı response formatlarını destekle
+          let products = null;
+          if (Array.isArray(res.data)) {
+            products = res.data;
+          } else if (res.data.products && Array.isArray(res.data.products)) {
+            products = res.data.products;
+          } else if (res.data.data && Array.isArray(res.data.data)) {
+            products = res.data.data;
+          }
+          
+          if (products && products.length > 0) {
+            console.log(`✅ ${products.length} ürün bulundu (direkt)`);
+            return products;
           }
         } catch (err: any) {
-          console.log("⚠️ Direkt arama sonuç vermedi, genel aramaya geçiliyor...");
+          console.log("⚠️ Direkt arama sonuç vermedi:", err.response?.status, err.message);
+          console.log("⚠️ Genel aramaya geçiliyor...");
           // Bulunamazsa genel aramaya devam et
         }
       }
@@ -113,19 +126,49 @@ export default function Home() {
       try {
         console.log("📦 Genel arama yapılıyor...");
         const res = await api.get(`/products?limit=10000`);
-        const allProducts = res.data.products || [];
+        
+        // Debug: Response yapısını kontrol et
+        console.log("🔍 API Response:", res.data);
+        console.log("🔍 Response keys:", Object.keys(res.data || {}));
+        
+        // Farklı response formatlarını destekle
+        let allProducts = [];
+        if (Array.isArray(res.data)) {
+          // Direkt array dönüyorsa
+          allProducts = res.data;
+        } else if (res.data.products && Array.isArray(res.data.products)) {
+          // { products: [...] } formatında dönüyorsa
+          allProducts = res.data.products;
+        } else if (res.data.data && Array.isArray(res.data.data)) {
+          // { data: [...] } formatında dönüyorsa
+          allProducts = res.data.data;
+        } else {
+          console.error("❌ Beklenmeyen response formatı:", res.data);
+          throw new Error("Ürünler yüklenemedi - geçersiz format");
+        }
+        
         console.log(`📦 Toplam ${allProducts.length} ürün yüklendi`);
 
         // Arama filtresi
-        const filtered = allProducts.filter((p: Product) => {
+        const filtered = allProducts.filter((p: any) => {
+          // Null/undefined kontrolü
+          if (!p) return false;
+          
           const titleMatch = p.title && p.title.toLowerCase().includes(searchTerm.toLowerCase());
           const skuMatch = p.sku && p.sku.toLowerCase().includes(searchTerm.toLowerCase());
-          const barcodeMatch = p.barcode && p.barcode.includes(searchTerm);
+          const barcodeMatch = p.barcode && p.barcode.toString().includes(searchTerm);
           
           return titleMatch || skuMatch || barcodeMatch;
         });
 
         console.log(`✅ ${filtered.length} ürün bulundu`);
+        
+        // Eğer hiç sonuç yoksa debug bilgisi ver
+        if (filtered.length === 0 && allProducts.length > 0) {
+          console.log("⚠️ Ürünler var ama filtreleme sonuç vermedi");
+          console.log("📝 İlk ürün örneği:", allProducts[0]);
+          console.log("🔍 Arama terimi:", searchTerm);
+        }
         
         // Sonuçları sırala: Önce tam eşleşenler, sonra kısmi eşleşenler
         const sorted = filtered.sort((a: any, b: any) => {
@@ -150,12 +193,31 @@ export default function Home() {
 
         return sorted;
       } catch (err: any) {
-        console.error("❌ Arama hatası:", err.response?.data || err.message);
+        console.error("❌ Arama hatası:", err);
+        console.error("❌ Hata detayı:", {
+          message: err.message,
+          response: err.response?.data,
+          status: err.response?.status,
+          url: err.config?.url,
+        });
+        
+        // Kullanıcıya anlamlı hata mesajı göster
+        if (err.response?.status === 404) {
+          toast.error("Ürün bulunamadı!");
+        } else if (err.response?.status >= 500) {
+          toast.error("Sunucu hatası! Lütfen tekrar deneyin.");
+        } else if (err.message === "Network Error") {
+          toast.error("Bağlantı hatası! Backend'e ulaşılamıyor.");
+        } else {
+          toast.error("Arama sırasında bir hata oluştu!");
+        }
+        
         return [];
       }
     },
     enabled: debounced.trim().length >= 2,
     staleTime: 30000, // 30 saniye cache
+    retry: 1, // Sadece 1 kez tekrar dene
   });
 
   // Cart functions
